@@ -6,16 +6,27 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from .auth import create_token, current_user, hash_password, verify_password
 from .config import get_settings
-from .database import Base, engine, get_db
+from .database import Base, SessionLocal, engine, get_db
 from .models import Answer, Assessment, Question, User, utcnow
 from .questions import QuestionGenerationError, generate_assessment_questions
 from .schemas import AnswerRequest, AnswerResult, AssessmentOut, DashboardOut, LoginRequest, RegisterRequest, ResultOut, StartRequest, TokenOut, UserOut
 from .services import assessment_out, next_question, result_out, suggestions
+from .seed import seed_demo_user
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    settings = get_settings()
+    if settings.demo_seed_enabled:
+        with SessionLocal() as db:
+            seed_demo_user(
+                db,
+                username=settings.demo_username,
+                email=settings.demo_email,
+                name=settings.demo_name,
+                password=settings.demo_password,
+            )
     yield
 
 

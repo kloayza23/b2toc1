@@ -33,6 +33,32 @@ def test_registration_login_and_identity(client):
     db.close()
 
 
+def test_demo_seed_is_idempotent_and_login_works(client):
+    from app.seed import seed_demo_user
+
+    db_dependency = client.app.dependency_overrides[get_db]()
+    db = next(db_dependency)
+    try:
+        for _ in range(2):
+            seed_demo_user(
+                db,
+                username="demo",
+                email="demo@example.com",
+                name="Usuario Demo",
+                password="LevelUpDemo2026!",
+            )
+        assert db.scalar(select(func.count(User.id)).where(User.username == "demo")) == 1
+    finally:
+        db_dependency.close()
+
+    response = client.post(
+        "/api/auth/login",
+        json={"user": "demo", "password": "LevelUpDemo2026!"},
+    )
+    assert response.status_code == 200
+    assert response.json()["user"]["email"] == "demo@example.com"
+
+
 def test_assessment_answer_is_saved_and_resumable(client, auth, monkeypatch):
     started = client.post("/api/assessments", headers=auth, json={"level": "B2"})
     assert started.status_code == 201

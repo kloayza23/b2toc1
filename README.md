@@ -42,6 +42,17 @@ Abre [http://localhost:3000](http://localhost:3000). La API vive en [http://loca
 
 El archivo `.env` de la raíz es el único archivo de variables y no se versiona. `VITE_API_URL` debe ser una URL alcanzable desde el navegador. La suscripción de ChatGPT no incluye uso de API: la facturación de OpenAI API se configura por separado.
 
+### Usuario demo local
+
+El arranque crea o actualiza un usuario demo cuando `DEMO_SEED_ENABLED=true`:
+
+```text
+Usuario: demo
+Contraseña: LevelUpDemo2026!
+```
+
+Estas credenciales son solo para desarrollo local. Antes de exponer el sistema, configura `DEMO_SEED_ENABLED=false` y elimina o cambia el usuario demo.
+
 ## Desarrollo local
 
 Requisitos: Python 3.11+, Node.js 20+ y PostgreSQL 15+ (también se puede usar SQLite para una prueba rápida).

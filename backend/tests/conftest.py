@@ -4,6 +4,7 @@ os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["JWT_SECRET"] = "test-secret-that-is-at-least-32-bytes"
 os.environ["OPENAI_API_KEY"] = "sk-test-only-not-a-real-key"
 os.environ["OPENAI_MODEL"] = "gpt-4o-mini"
+os.environ["DEMO_SEED_ENABLED"] = "false"
 
 import pytest
 from fastapi.testclient import TestClient
