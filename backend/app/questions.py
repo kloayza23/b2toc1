@@ -1,15 +1,14 @@
-import json
-from typing import Annotated, Any
+from typing import Annotated
 
-import httpx
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator
+from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from .config import get_settings
 from .models import Level, Module, Question
 
 
-class OllamaGenerationError(RuntimeError):
-    """Ollama could not produce a complete, valid batch."""
+class QuestionGenerationError(RuntimeError):
+    """OpenAI could not produce a complete, valid batch."""
 
 
 Choice = Annotated[str, StringConstraints(min_length=1, max_length=255)]
@@ -68,7 +67,10 @@ MODULE_GUIDANCE = {
 
 def _request_batch(level: Level, module: Module) -> GeneratedBatch:
     settings = get_settings()
-    schema: dict[str, Any] = GeneratedBatch.model_json_schema()
+    if not settings.openai_api_key:
+        raise QuestionGenerationError(
+            "Falta OPENAI_API_KEY. Configúrala en el archivo .env y reinicia el backend."
+        )
     system = (
         "You create rigorous CEFR English assessments. Return only data matching the JSON schema. "
         "Every item must be original, unambiguous and appropriate for the requested CEFR level. "
@@ -81,27 +83,29 @@ def _request_batch(level: Level, module: Module) -> GeneratedBatch:
         f"Focus on {MODULE_GUIDANCE[module]}. For reading and listening, context is required on every item."
     )
     try:
-        response = httpx.post(
-            f"{settings.ollama_base_url.rstrip('/')}/api/chat",
-            json={
-                "model": settings.ollama_model,
-                "stream": False,
-                "format": schema,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "options": {"temperature": 0.35},
-            },
-            timeout=settings.ollama_timeout_seconds,
+        client = OpenAI(
+            api_key=settings.openai_api_key,
+            timeout=settings.openai_timeout_seconds,
+            max_retries=1,
         )
-        response.raise_for_status()
-        content = response.json().get("message", {}).get("content", "")
-        batch = GeneratedBatch.model_validate(json.loads(content))
+        response = client.responses.parse(
+            model=settings.openai_model,
+            input=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            text_format=GeneratedBatch,
+        )
+        batch = response.output_parsed
+        if batch is None:
+            raise ValueError("el modelo no devolvió preguntas estructuradas")
         if module in (Module.reading, Module.listening) and any(not item.context for item in batch.questions):
             raise ValueError("faltan contextos")
         return batch
-    except (httpx.HTTPError, json.JSONDecodeError, ValidationError, ValueError, KeyError, AttributeError, TypeError) as exc:
-        raise OllamaGenerationError(
-            f"No se pudieron generar las preguntas de {module.value}. Comprueba que Ollama esté activo "
-            f"y que el modelo '{settings.ollama_model}' esté instalado."
+    except Exception as exc:
+        raise QuestionGenerationError(
+            f"No se pudieron generar las preguntas de {module.value}. Comprueba OPENAI_API_KEY, "
+            f"la facturación de API y el acceso al modelo '{settings.openai_model}'."
         ) from exc
 
 
@@ -125,5 +129,5 @@ def generate_assessment_questions(assessment_id: int, level: Level) -> list[Ques
         )
     prompts = [question.prompt.strip().casefold() for question in questions]
     if len(questions) != 100 or len(set(prompts)) != 100:
-        raise OllamaGenerationError("Ollama no generó 100 preguntas únicas para la evaluación.")
+        raise QuestionGenerationError("OpenAI no generó 100 preguntas únicas para la evaluación.")
     return questions

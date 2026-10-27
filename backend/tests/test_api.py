@@ -42,7 +42,7 @@ def test_assessment_answer_is_saved_and_resumable(client, auth, monkeypatch):
     question = assessment["question"]
 
     def must_not_regenerate(*_):
-        raise AssertionError("reanudar no debe llamar a Ollama")
+        raise AssertionError("reanudar no debe llamar a OpenAI")
 
     monkeypatch.setattr("app.main.generate_assessment_questions", must_not_regenerate)
     restarted = client.post("/api/assessments", headers=auth, json={"level": "C1"})
@@ -165,16 +165,16 @@ def test_cors_only_allows_configured_origins(client):
     assert "access-control-allow-origin" not in rejected.headers
 
 
-def test_ollama_unavailable_returns_actionable_error(client, auth, monkeypatch):
-    from app.questions import OllamaGenerationError
+def test_openai_unavailable_returns_actionable_error(client, auth, monkeypatch):
+    from app.questions import QuestionGenerationError
 
     def unavailable(*_):
-        raise OllamaGenerationError("Ollama no está disponible; instala el modelo qwen3.8")
+        raise QuestionGenerationError("OpenAI no está disponible; revisa OPENAI_API_KEY")
 
     monkeypatch.setattr("app.main.generate_assessment_questions", unavailable)
     response = client.post("/api/assessments", headers=auth, json={"level": "B1"})
     assert response.status_code == 503
-    assert "Ollama" in response.json()["detail"]
+    assert "OpenAI" in response.json()["detail"]
     assert client.get("/api/assessments/current", headers=auth).json() is None
     db_dependency = client.app.dependency_overrides[get_db]()
     db = next(db_dependency)
@@ -184,18 +184,15 @@ def test_ollama_unavailable_returns_actionable_error(client, auth, monkeypatch):
         db_dependency.close()
 
 
-def test_ollama_structured_batch_is_validated(monkeypatch):
-    import json
+def test_openai_structured_batch_is_validated(monkeypatch):
     from app.models import Level, Module
-    from app.questions import _request_batch
+    from app.questions import GeneratedBatch, _request_batch
 
     captured = {}
 
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
+    class FakeResponses:
+        def parse(self, **kwargs):
+            captured.update(kwargs)
             questions = [{
                 "prompt": f"Selecciona la respuesta correcta para el ejercicio número {i}",
                 "context": None,
@@ -203,30 +200,27 @@ def test_ollama_structured_batch_is_validated(monkeypatch):
                 "correct_answer": f"A{i}",
                 "explanation": "Esta es la respuesta apropiada para el objetivo evaluado.",
             } for i in range(25)]
-            return {"message": {"content": json.dumps({"questions": questions})}}
+            return type("Response", (), {"output_parsed": GeneratedBatch.model_validate({"questions": questions})})()
 
-    def fake_post(url, **kwargs):
-        captured.update(url=url, **kwargs)
-        return FakeResponse()
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client"] = kwargs
+            self.responses = FakeResponses()
 
-    monkeypatch.setattr("app.questions.httpx.post", fake_post)
+    monkeypatch.setattr("app.questions.OpenAI", FakeClient)
     batch = _request_batch(Level.B2, Module.writing)
     assert len(batch.questions) == 25
-    assert captured["json"]["model"] == "qwen3.8"
-    assert captured["json"]["format"]["type"] == "object"
-    assert captured["json"]["format"]["additionalProperties"] is False
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["text_format"] is GeneratedBatch
+    assert captured["client"]["api_key"] == "sk-test-only-not-a-real-key"
 
 
-def test_ollama_invalid_or_duplicate_batch_is_rejected(monkeypatch):
-    import json
+def test_openai_invalid_or_duplicate_batch_is_rejected(monkeypatch):
     from app.models import Level, Module
-    from app.questions import OllamaGenerationError, _request_batch
+    from app.questions import GeneratedBatch, QuestionGenerationError, _request_batch
 
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
+    class FakeResponses:
+        def parse(self, **_):
             questions = [{
                 "prompt": "Este prompt se repite en todas las preguntas",
                 "context": None,
@@ -234,51 +228,49 @@ def test_ollama_invalid_or_duplicate_batch_is_rejected(monkeypatch):
                 "correct_answer": "A",
                 "explanation": "Explicación suficientemente extensa.",
             } for _ in range(25)]
-            return {"message": {"content": json.dumps({"questions": questions})}}
+            return type("Response", (), {"output_parsed": GeneratedBatch.model_validate({"questions": questions})})()
 
-    monkeypatch.setattr("app.questions.httpx.post", lambda *_, **__: FakeResponse())
-    with pytest.raises(OllamaGenerationError):
+    class FakeClient:
+        def __init__(self, **_):
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr("app.questions.OpenAI", FakeClient)
+    with pytest.raises(QuestionGenerationError):
         _request_batch(Level.B2, Module.writing)
 
 
-def test_ollama_generates_exactly_four_valid_batches(monkeypatch):
-    import json
+def test_openai_generates_exactly_four_valid_batches(monkeypatch):
     from app.models import Level
-    from app.questions import generate_assessment_questions
+    from app.questions import GeneratedBatch, generate_assessment_questions
 
     calls = []
 
-    class FakeResponse:
-        def __init__(self, module):
-            self.module = module
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            needs_context = self.module in {"reading", "listening"}
+    class FakeResponses:
+        def parse(self, **kwargs):
+            user_prompt = kwargs["input"][1]["content"]
+            module = next(name for name in ("speech", "writing", "reading", "listening") if f"module {name}" in user_prompt)
+            calls.append((module, kwargs["model"]))
+            needs_context = module in {"reading", "listening"}
             questions = [{
-                "prompt": f"Pregunta única {self.module} generada número {i}",
-                "context": f"Contexto en inglés {self.module} {i}" if needs_context else None,
+                "prompt": f"Pregunta única {module} generada número {i}",
+                "context": f"Contexto en inglés {module} {i}" if needs_context else None,
                 "choices": [f"A{i}", f"B{i}", f"C{i}", f"D{i}"],
                 "correct_answer": f"A{i}",
                 "explanation": "Explicación suficientemente extensa para validar.",
             } for i in range(25)]
-            return {"message": {"content": json.dumps({"questions": questions})}}
+            return type("Response", (), {"output_parsed": GeneratedBatch.model_validate({"questions": questions})})()
 
-    def fake_post(_, **kwargs):
-        user_prompt = kwargs["json"]["messages"][1]["content"]
-        module = next(name for name in ("speech", "writing", "reading", "listening") if f"module {name}" in user_prompt)
-        calls.append((module, kwargs["json"]["model"]))
-        return FakeResponse(module)
+    class FakeClient:
+        def __init__(self, **_):
+            self.responses = FakeResponses()
 
-    monkeypatch.setattr("app.questions.httpx.post", fake_post)
+    monkeypatch.setattr("app.questions.OpenAI", FakeClient)
     questions = generate_assessment_questions(42, Level.C1)
     assert len(questions) == 100
     assert Counter(question.module.value for question in questions) == {
         "speech": 25, "writing": 25, "reading": 25, "listening": 25,
     }
-    assert calls == [("speech", "qwen3.8"), ("writing", "qwen3.8"), ("reading", "qwen3.8"), ("listening", "qwen3.8")]
+    assert calls == [("speech", "gpt-4o-mini"), ("writing", "gpt-4o-mini"), ("reading", "gpt-4o-mini"), ("listening", "gpt-4o-mini")]
 
 
 def test_persistence_failure_rolls_back_and_returns_503(client, auth, monkeypatch):

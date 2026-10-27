@@ -11,9 +11,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./b2toc1.sqlite3"
     jwt_secret: str = Field(min_length=32)
     jwt_expire_minutes: int = Field(default=1440, gt=0)
-    ollama_base_url: str = Field(default="http://host.docker.internal:11434", min_length=8)
-    ollama_model: str = Field(default="qwen3.8", min_length=1)
-    ollama_timeout_seconds: float = Field(default=300, gt=0, le=1800)
+    openai_api_key: str = ""
+    openai_model: str = Field(default="gpt-4o-mini", min_length=1)
+    openai_timeout_seconds: float = Field(default=300, gt=0, le=1800)
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
 

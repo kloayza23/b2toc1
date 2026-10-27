@@ -8,7 +8,7 @@ from .auth import create_token, current_user, hash_password, verify_password
 from .config import get_settings
 from .database import Base, engine, get_db
 from .models import Answer, Assessment, Question, User, utcnow
-from .questions import OllamaGenerationError, generate_assessment_questions
+from .questions import QuestionGenerationError, generate_assessment_questions
 from .schemas import AnswerRequest, AnswerResult, AssessmentOut, DashboardOut, LoginRequest, RegisterRequest, ResultOut, StartRequest, TokenOut, UserOut
 from .services import assessment_out, next_question, result_out, suggestions
 
@@ -82,7 +82,7 @@ def start(data: StartRequest, user: User = Depends(current_user), db: Session = 
         if active:
             return assessment_out(db, active)
         raise HTTPException(status_code=503, detail="No se pudo reservar una evaluación nueva. Inténtalo nuevamente.") from exc
-    except OllamaGenerationError as exc:
+    except QuestionGenerationError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail=str(exc))
     except SQLAlchemyError as exc:

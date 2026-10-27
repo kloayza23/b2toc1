@@ -2,7 +2,8 @@ import os
 
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["JWT_SECRET"] = "test-secret-that-is-at-least-32-bytes"
-os.environ["OLLAMA_BASE_URL"] = "http://ollama.test"
+os.environ["OPENAI_API_KEY"] = "sk-test-only-not-a-real-key"
+os.environ["OPENAI_MODEL"] = "gpt-4o-mini"
 
 import pytest
 from fastapi.testclient import TestClient
