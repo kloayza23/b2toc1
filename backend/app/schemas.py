@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from .models import Level, Module
 
@@ -83,4 +84,43 @@ class DashboardOut(BaseModel):
     active: AssessmentOut | None
     history: list[ResultOut]
     suggestions: list[str]
+
+
+class VocabularyCreate(BaseModel):
+    question_id: int
+    word: str = Field(min_length=1, max_length=100)
+    status: Literal["learning", "learned"] = "learning"
+
+
+class VocabularyStatusUpdate(BaseModel):
+    status: Literal["learning", "learned"]
+
+
+class VocabularyWordOut(BaseModel):
+    id: int
+    question_id: int
+    word: str
+    status: str
+    level: Level
+    reading_title: str
+    added_at: datetime
+    learned_at: datetime | None
+
+
+class ReadingVocabularyStats(BaseModel):
+    question_id: int
+    level: Level
+    title: str
+    total: int
+    learning: int
+    learned: int
+
+
+class VocabularyOverview(BaseModel):
+    total: int
+    learning: int
+    learned: int
+    unique_words: int
+    readings: list[ReadingVocabularyStats]
+    words: list[VocabularyWordOut]
 

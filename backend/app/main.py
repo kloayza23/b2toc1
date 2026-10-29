@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import re
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, or_, select
@@ -7,9 +8,9 @@ from sqlalchemy.orm import Session
 from .auth import create_token, current_user, hash_password, verify_password
 from .config import get_settings
 from .database import Base, SessionLocal, engine, get_db
-from .models import Answer, Assessment, Question, User, utcnow
+from .models import Answer, Assessment, Module, Question, User, VocabularyWord, utcnow
 from .questions import QuestionGenerationError, generate_assessment_questions
-from .schemas import AnswerRequest, AnswerResult, AssessmentOut, DashboardOut, LoginRequest, RegisterRequest, ResultOut, StartRequest, TokenOut, UserOut
+from .schemas import AnswerRequest, AnswerResult, AssessmentOut, DashboardOut, LoginRequest, ReadingVocabularyStats, RegisterRequest, ResultOut, StartRequest, TokenOut, UserOut, VocabularyCreate, VocabularyOverview, VocabularyStatusUpdate, VocabularyWordOut
 from .services import assessment_out, next_question, result_out, suggestions
 from .seed import seed_demo_user
 
@@ -159,4 +160,105 @@ def dashboard(user: User = Depends(current_user), db: Session = Depends(get_db))
     active = next((item for item in items if item.status == "in_progress"), None)
     history = [result_out(item) for item in items if item.status == "completed"]
     return DashboardOut(active=assessment_out(db, active) if active else None, history=history, suggestions=suggestions(history))
+
+
+def _vocabulary_word_out(item: VocabularyWord) -> VocabularyWordOut:
+    question = item.question
+    return VocabularyWordOut(
+        id=item.id,
+        question_id=item.question_id,
+        word=item.word,
+        status=item.status,
+        level=question.level,
+        reading_title=f"Lectura {question.position} · {question.level.value}",
+        added_at=item.added_at,
+        learned_at=item.learned_at,
+    )
+
+
+@app.post("/api/vocabulary", response_model=VocabularyWordOut, status_code=201)
+def save_vocabulary_word(data: VocabularyCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    question = db.scalar(
+        select(Question)
+        .join(Assessment, Assessment.id == Question.assessment_id)
+        .where(Question.id == data.question_id, Assessment.user_id == user.id)
+    )
+    if not question or question.module != Module.reading:
+        raise HTTPException(status_code=404, detail="Lectura no encontrada")
+    word = data.word.strip(" .,;:!?\"'()[]{}“”‘’").strip()
+    if not re.fullmatch(r"[A-Za-zÀ-ÖØ-öø-ÿ]+(?:['’-][A-Za-zÀ-ÖØ-öø-ÿ]+)*", word):
+        raise HTTPException(status_code=422, detail="Selecciona una sola palabra válida")
+    normalized = word.casefold().replace("’", "'")
+    item = db.scalar(
+        select(VocabularyWord).where(
+            VocabularyWord.user_id == user.id,
+            VocabularyWord.question_id == question.id,
+            VocabularyWord.normalized_word == normalized,
+        )
+    )
+    now = utcnow()
+    if item is None:
+        item = VocabularyWord(
+            user_id=user.id,
+            question_id=question.id,
+            word=word,
+            normalized_word=normalized,
+            status=data.status,
+            learned_at=now if data.status == "learned" else None,
+        )
+        db.add(item)
+    else:
+        item.word = word
+        item.status = data.status
+        item.learned_at = now if data.status == "learned" else None
+    db.commit()
+    db.refresh(item)
+    return _vocabulary_word_out(item)
+
+
+@app.patch("/api/vocabulary/{word_id}", response_model=VocabularyWordOut)
+def update_vocabulary_word(word_id: int, data: VocabularyStatusUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    item = db.scalar(select(VocabularyWord).where(VocabularyWord.id == word_id, VocabularyWord.user_id == user.id))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Palabra no encontrada")
+    item.status = data.status
+    item.learned_at = utcnow() if data.status == "learned" else None
+    db.commit()
+    db.refresh(item)
+    return _vocabulary_word_out(item)
+
+
+@app.get("/api/vocabulary", response_model=VocabularyOverview)
+def vocabulary_overview(question_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    query = (
+        select(VocabularyWord)
+        .join(Question, Question.id == VocabularyWord.question_id)
+        .where(VocabularyWord.user_id == user.id)
+        .order_by(VocabularyWord.updated_at.desc())
+    )
+    if question_id is not None:
+        query = query.where(VocabularyWord.question_id == question_id)
+    items = list(db.scalars(query).all())
+    groups: dict[int, list[VocabularyWord]] = {}
+    for item in items:
+        groups.setdefault(item.question_id, []).append(item)
+    readings = []
+    for source_id, source_items in groups.items():
+        question = source_items[0].question
+        readings.append(ReadingVocabularyStats(
+            question_id=source_id,
+            level=question.level,
+            title=f"Lectura {question.position} · {question.level.value}",
+            total=len(source_items),
+            learning=sum(item.status == "learning" for item in source_items),
+            learned=sum(item.status == "learned" for item in source_items),
+        ))
+    return VocabularyOverview(
+        total=len(items),
+        learning=sum(item.status == "learning" for item in items),
+        learned=sum(item.status == "learned" for item in items),
+        unique_words=len({item.normalized_word for item in items}),
+        readings=readings,
+        words=[_vocabulary_word_out(item) for item in items],
+    )
 

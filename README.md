@@ -7,7 +7,8 @@ MVP full-stack para diagnosticar y seguir el progreso de inglés entre A1 y C1. 
 - Registro e inicio de sesión por usuario (o correo) con contraseñas `bcrypt` y JWT con expiración configurable.
 - Selector de nivel A1, A2, B1, B2 o C1 y 100 preguntas por evaluación.
 - Generación dinámica con OpenAI: cada evaluación recibe 100 preguntas nuevas y únicas.
-- Reading con textos y Listening reproducible mediante la síntesis de voz del navegador.
+- Reading interactivo: selección y pronunciación de palabras, vocabulario personal y estadísticas por lectura.
+- Listening reproducible mediante la síntesis de voz del navegador.
 - Evaluación reanudable: la respuesta, módulo actual y progreso quedan persistidos.
 - Dashboard con historial, puntuación total, desglose por habilidad y recomendaciones.
 - Salida JSON estructurada, validada antes de persistir cada lote generado.
@@ -82,10 +83,11 @@ make dev-frontend
 
 ```bash
 make test
+npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
-Las pruebas usan una base SQLite en memoria: no modifican la base de desarrollo.
+Las pruebas de FastAPI usan una base SQLite en memoria y no modifican la base de desarrollo. Las pruebas de React validan la lectura interactiva, la persistencia visual del vocabulario y las estadísticas por lectura en JSDOM.
 
 ## Generación con OpenAI
 
@@ -113,6 +115,9 @@ No existe un banco de preguntas ni un fallback pregrabado. Si falta la clave, no
 | POST | `/api/assessments/{id}/answers` | Guardar y corregir respuesta |
 | GET | `/api/assessments/{id}/results` | Obtener puntuaciones |
 | GET | `/api/dashboard` | Progreso, historial y recomendaciones |
+| POST | `/api/vocabulary` | Guardar una palabra de una lectura |
+| PATCH | `/api/vocabulary/{id}` | Marcar una palabra como aprendida o pendiente |
+| GET | `/api/vocabulary` | Vocabulario y estadísticas por lectura |
 
 ## Notas de seguridad y producción
 

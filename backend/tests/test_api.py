@@ -108,6 +108,65 @@ def test_dashboard_has_deterministic_suggestions(client, auth):
     assert len(body["suggestions"]) == 3
 
 
+def test_reading_vocabulary_is_saved_and_grouped_by_reading(client, auth):
+    current = client.post("/api/assessments", headers=auth, json={"level": "B2"}).json()
+    speech_question_id = current["question"]["id"]
+    for _ in range(50):
+        question = current["question"]
+        response = client.post(
+            f"/api/assessments/{current['id']}/answers",
+            headers=auth,
+            json={"question_id": question["id"], "selected_answer": question["choices"][0]},
+        )
+        assert response.status_code == 200
+        current = response.json()["assessment"]
+
+    reading = current["question"]
+    assert reading["module"] == "reading"
+    created = client.post(
+        "/api/vocabulary",
+        headers=auth,
+        json={"question_id": reading["id"], "word": "Determination", "status": "learning"},
+    )
+    assert created.status_code == 201
+    word_id = created.json()["id"]
+
+    updated = client.post(
+        "/api/vocabulary",
+        headers=auth,
+        json={"question_id": reading["id"], "word": "determination", "status": "learned"},
+    )
+    assert updated.status_code == 201
+    assert updated.json()["id"] == word_id
+
+    overview = client.get("/api/vocabulary", headers=auth).json()
+    assert overview["total"] == 1
+    assert overview["unique_words"] == 1
+    assert overview["learned"] == 1
+    assert overview["readings"][0]["question_id"] == reading["id"]
+    assert overview["readings"][0]["learned"] == 1
+
+    changed = client.patch(
+        f"/api/vocabulary/{word_id}", headers=auth, json={"status": "learning"}
+    )
+    assert changed.status_code == 200
+    assert changed.json()["status"] == "learning"
+    assert client.get(
+        f"/api/vocabulary?question_id={reading['id']}", headers=auth
+    ).json()["learning"] == 1
+
+    assert client.post(
+        "/api/vocabulary",
+        headers=auth,
+        json={"question_id": speech_question_id, "word": "hello", "status": "learning"},
+    ).status_code == 404
+    assert client.post(
+        "/api/vocabulary",
+        headers=auth,
+        json={"question_id": reading["id"], "word": "two words", "status": "learning"},
+    ).status_code == 422
+
+
 def test_full_assessment_completes_with_four_modules(client, auth):
     current = client.post("/api/assessments", headers=auth, json={"level": "A2"}).json()
     seen_modules = Counter()
@@ -152,6 +211,7 @@ def test_full_assessment_completes_with_four_modules(client, auth):
 
 def test_protected_routes_require_token(client):
     assert client.get("/api/dashboard").status_code == 401
+    assert client.get("/api/vocabulary").status_code == 401
 
 
 def test_rejects_tampered_token_and_answer_outside_choices(client, auth):

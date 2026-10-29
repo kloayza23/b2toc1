@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, BarChart3, BookOpen, BrainCircuit, Check, ChevronRight, CircleUserRound, Headphones, LogOut, MessageCircle, PenLine, Play, RotateCcw, Sparkles, Target, Volume2, X } from 'lucide-react'
+import { ArrowRight, BarChart3, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronRight, CircleUserRound, Clock3, Headphones, LayoutDashboard, Library, LogOut, MessageCircle, PenLine, Play, Sparkles, Target, Volume2, X } from 'lucide-react'
 import { api, session } from './api'
 
 const levels = ['A1', 'A2', 'B1', 'B2', 'C1']
@@ -38,8 +38,8 @@ function Auth({ onAuth }) {
   </main>
 }
 
-function Header({ user, onLogout }) {
-  return <header><Logo/><nav><span className="user-chip"><CircleUserRound size={20}/>{user.name.split(' ')[0]}</span><button className="icon-btn" onClick={onLogout} title="Cerrar sesión"><LogOut size={19}/></button></nav></header>
+function Header({ user, view, onNavigate, onLogout }) {
+  return <header><Logo/><nav><button className={`nav-btn ${view==='dashboard'?'active':''}`} onClick={()=>onNavigate('dashboard')}><LayoutDashboard size={17}/> Inicio</button><button className={`nav-btn ${view==='vocabulary'?'active':''}`} onClick={()=>onNavigate('vocabulary')}><Library size={17}/> Vocabulario</button><span className="user-chip"><CircleUserRound size={20}/>{user.name.split(' ')[0]}</span><button className="icon-btn" onClick={onLogout} title="Cerrar sesión"><LogOut size={19}/></button></nav></header>
 }
 
 function ModuleCards({ scores }) {
@@ -62,6 +62,49 @@ function Dashboard({ user, onStart, onResume }) {
   </div>
 }
 
+const normalizeWord = word => word.toLocaleLowerCase().replace('’', "'")
+const isReadableWord = token => /^[A-Za-zÀ-ÖØ-öø-ÿ]+(?:['’-][A-Za-zÀ-ÖØ-öø-ÿ]+)*$/.test(token)
+
+export function ReadingPassage({ question }) {
+  const [selectedWord, setSelectedWord] = useState('')
+  const [saved, setSaved] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    api(`/vocabulary?question_id=${question.id}`).then(data => {
+      const entries = {}; data.words.forEach(item => { entries[normalizeWord(item.word)] = item }); setSaved(entries)
+    }).catch(e => setError(e.message))
+  }, [question.id])
+  function speak(word) { speechSynthesis.cancel(); const voice = new SpeechSynthesisUtterance(word); voice.lang='en-US'; voice.rate=.8; speechSynthesis.speak(voice) }
+  async function save(status) {
+    if (!selectedWord || saving) return
+    setSaving(true); setError('')
+    try {
+      const item = await api('/vocabulary', { method:'POST', body:JSON.stringify({ question_id:question.id, word:selectedWord, status }) })
+      setSaved(current => ({...current, [normalizeWord(item.word)]:item}))
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
+  }
+  const selectedItem = saved[normalizeWord(selectedWord)]
+  return <div className="reading-workspace">
+    <div className="reading-toolbar"><div><BookOpen size={17}/><span><b>Lectura interactiva</b><small>Pulsa cualquier palabra nueva para guardarla.</small></span></div><span className="saved-count"><Library size={15}/>{Object.keys(saved).length} guardadas</span></div>
+    <div className="reading-passage">{question.context.split(/([A-Za-zÀ-ÖØ-öø-ÿ]+(?:['’-][A-Za-zÀ-ÖØ-öø-ÿ]+)*)/g).map((token,index) => isReadableWord(token) ? <button type="button" key={`${token}-${index}`} className={`reading-word ${saved[normalizeWord(token)]?.status || ''} ${normalizeWord(selectedWord)===normalizeWord(token)?'selected':''}`} onClick={()=>setSelectedWord(token)}>{token}</button> : <span key={`${token}-${index}`}>{token}</span>)}</div>
+    {selectedWord && <div className="word-popover"><button className="word-sound" onClick={()=>speak(selectedWord)} title="Escuchar pronunciación"><Volume2 size={21}/></button><div className="word-name"><strong>{selectedWord}</strong><small>{selectedItem?.status==='learned' ? 'Marcada como aprendida' : selectedItem ? 'En tu lista para aprender' : 'Nueva palabra seleccionada'}</small></div><div className="word-actions"><button className={`learned ${selectedItem?.status==='learned'?'active':''}`} disabled={saving} onClick={()=>save('learned')}><Check size={16}/> Aprendida</button><button className={`learning ${selectedItem?.status==='learning'?'active':''}`} disabled={saving} onClick={()=>save('learning')}><Library size={16}/> Aprender</button></div><button className="close-word" onClick={()=>setSelectedWord('')}><X size={17}/></button></div>}
+    {error && <div className="error vocabulary-error">{error}</div>}
+  </div>
+}
+
+export function Vocabulary() {
+  const [data,setData]=useState(null), [error,setError]=useState('')
+  useEffect(()=>{api('/vocabulary').then(setData).catch(e=>setError(e.message))},[])
+  async function changeStatus(item,status){try{const updated=await api(`/vocabulary/${item.id}`,{method:'PATCH',body:JSON.stringify({status})});setData(current=>{const words=current.words.map(word=>word.id===updated.id?updated:word);const learned=words.filter(word=>word.status==='learned').length;const readings=current.readings.map(reading=>{const source=words.filter(word=>word.question_id===reading.question_id);return {...reading,total:source.length,learned:source.filter(word=>word.status==='learned').length,learning:source.filter(word=>word.status==='learning').length}});return {...current,words,learned,learning:words.length-learned,readings}})}catch(e){setError(e.message)}}
+  if(!data)return <div className="center-loader">{error||'Preparando tu vocabulario…'}</div>
+  return <main className="vocabulary-page page"><section className="vocabulary-hero"><div><span className="eyebrow">TU BIBLIOTECA PERSONAL</span><h1>Vocabulario</h1><p>Convierte cada lectura en palabras que realmente recuerdas.</p></div><div className="vocab-hero-icon"><Library size={34}/></div></section>{error&&<div className="error">{error}</div>}
+    <section className="vocab-stats"><article><Library/><div><strong>{data.unique_words}</strong><span>Palabras únicas</span></div></article><article><Clock3/><div><strong>{data.learning}</strong><span>Por aprender</span></div></article><article><CheckCircle2/><div><strong>{data.learned}</strong><span>Aprendidas</span></div></article><article><BookOpen/><div><strong>{data.readings.length}</strong><span>Lecturas trabajadas</span></div></article></section>
+    <section className="vocabulary-layout"><article className="reading-stats-panel"><div className="section-title"><div><span className="eyebrow">POR LECTURA</span><h2>Palabras aprendidas</h2></div><BarChart3/></div>{data.readings.length?data.readings.map(reading=><div className="reading-stat" key={reading.question_id}><div className="reading-stat-head"><div><b>{reading.title}</b><small>{reading.total} palabras guardadas</small></div><strong>{reading.learned}/{reading.total}</strong></div><div className="progress"><i style={{width:`${reading.total?reading.learned/reading.total*100:0}%`}}/></div></div>):<div className="empty"><BookOpen/><p>Selecciona palabras durante una actividad de Reading para ver aquí tus estadísticas.</p></div>}</article>
+      <article className="word-list-panel"><div className="section-title"><div><span className="eyebrow">PALABRAS</span><h2>Tu colección</h2></div><span className="date-pill">{data.total} guardadas</span></div>{data.words.length?<div className="vocab-word-list">{data.words.map(item=><div className="vocab-row" key={item.id}><button className="vocab-speaker" onClick={()=>{const voice=new SpeechSynthesisUtterance(item.word);voice.lang='en-US';speechSynthesis.speak(voice)}}><Volume2 size={17}/></button><div><b>{item.word}</b><small>{item.reading_title}</small></div><button className={`status-pill ${item.status}`} onClick={()=>changeStatus(item,item.status==='learned'?'learning':'learned')}>{item.status==='learned'?<><Check size={14}/> Aprendida</>:<>Aprender</>}</button></div>)}</div>:<div className="empty"><Library/><p>Aún no guardaste palabras.</p></div>}</article></section>
+  </main>
+}
+
 function Assessment({ initial, onDone, onExit }) {
   const [assessment, setAssessment] = useState(initial)
   const [selected, setSelected] = useState('')
@@ -79,7 +122,7 @@ function Assessment({ initial, onDone, onExit }) {
   function next() { if (feedback.assessment.status === 'completed') onDone(assessment.id); else { setAssessment(feedback.assessment); setSelected(''); setFeedback(null) } }
   const withinModule = (assessment.answered % 25) + 1
   return <div className="test-page"><div className="test-top"><Logo/><button className="exit-btn" onClick={onExit}><X size={18}/> Guardar y salir</button></div><div className="test-progress"><div className="test-progress-label"><span>Progreso general</span><b>{assessment.answered}/100</b></div><div className="progress"><i style={{width:`${assessment.progress_percent}%`}}/></div><div className="step-dots">{Object.entries(moduleMeta).map(([key,m],i)=>{const MI=m.Icon; const complete=assessment.answered >= (i+1)*25; const active=q?.module===key; return <div className={`${active?'active ':''}${complete?'complete':''}`} key={key}><span>{complete?<Check size={16}/>:<MI size={16}/>}</span><small>{m.label}</small></div>})}</div></div>
-    <main className="question-wrap"><div className="question-head"><div className="question-type" style={{color:meta.color}}><Icon size={20}/>{meta.label}</div><span>Pregunta {withinModule} de 25</span></div><article className="question-card">{q?.context && <div className={`context-box ${q.module}`}><div className="context-label">{q.module==='listening' ? <><Volume2/> Escucha el audio</> : <><BookOpen/> Lee el texto</>}</div>{q.module==='listening' ? <button className="audio-btn" onClick={listen}><Play fill="currentColor"/> Reproducir</button> : <p>{q.context}</p>}</div>}<h1>{q?.prompt}</h1><div className="choices">{q?.choices.map((choice,i)=>{let cls=selected===choice?'selected':''; if(feedback){if(choice===feedback.correct_answer) cls='correct'; else if(choice===selected) cls='wrong'} return <button disabled={!!feedback} className={cls} key={choice} onClick={()=>setSelected(choice)}><span>{String.fromCharCode(65+i)}</span>{choice}{cls==='correct'&&<Check/>}{cls==='wrong'&&<X/>}</button>})}</div>{feedback && <div className={`feedback ${feedback.correct?'ok':'no'}`}><b>{feedback.correct ? '¡Muy bien!' : 'Casi. Revisa esta idea.'}</b><p>{feedback.explanation}</p></div>}{error&&<div className="error">{error}</div>}</article><div className="question-actions"><span>{selected && !feedback ? 'Respuesta seleccionada' : 'Elige una opción para continuar'}</span>{feedback?<button className="primary" onClick={next}>{feedback.assessment.status==='completed'?'Ver resultados':'Siguiente'} <ArrowRight size={18}/></button>:<button className="primary" disabled={!selected||loading} onClick={submit}>{loading?'Guardando…':'Comprobar'} <ArrowRight size={18}/></button>}</div></main>
+    <main className={`question-wrap ${q?.module==='reading'?'reading-mode':''}`}><div className="question-head"><div className="question-type" style={{color:meta.color}}><Icon size={20}/>{meta.label}</div><span>Pregunta {withinModule} de 25</span></div><article className="question-card">{q?.context && (q.module==='reading'?<ReadingPassage key={q.id} question={q}/>:<div className={`context-box ${q.module}`}><div className="context-label"><Volume2/> Escucha el audio</div><button className="audio-btn" onClick={listen}><Play fill="currentColor"/> Reproducir</button></div>)}<h1>{q?.prompt}</h1><div className="choices">{q?.choices.map((choice,i)=>{let cls=selected===choice?'selected':''; if(feedback){if(choice===feedback.correct_answer) cls='correct'; else if(choice===selected) cls='wrong'} return <button disabled={!!feedback} className={cls} key={choice} onClick={()=>setSelected(choice)}><span>{String.fromCharCode(65+i)}</span>{choice}{cls==='correct'&&<Check/>}{cls==='wrong'&&<X/>}</button>})}</div>{feedback && <div className={`feedback ${feedback.correct?'ok':'no'}`}><b>{feedback.correct ? '¡Muy bien!' : 'Casi. Revisa esta idea.'}</b><p>{feedback.explanation}</p></div>}{error&&<div className="error">{error}</div>}</article><div className="question-actions"><span>{selected && !feedback ? 'Respuesta seleccionada' : 'Elige una opción para continuar'}</span>{feedback?<button className="primary" onClick={next}>{feedback.assessment.status==='completed'?'Ver resultados':'Siguiente'} <ArrowRight size={18}/></button>:<button className="primary" disabled={!selected||loading} onClick={submit}>{loading?'Guardando…':'Comprobar'} <ArrowRight size={18}/></button>}</div></main>
   </div>
 }
 
@@ -100,6 +143,6 @@ export default function App() {
   if(view==='auth')return <Auth onAuth={u=>{setUser(u);setView('dashboard')}}/>
   if(view==='assessment')return <Assessment initial={assessment} onDone={id=>{setResultId(id);setView('results')}} onExit={()=>setView('dashboard')}/>
   if(view==='results')return <Results id={resultId} onHome={()=>setView('dashboard')}/>
-  return <><Header user={user} onLogout={logout}/><Dashboard key={view} user={user} onStart={a=>{setAssessment(a);setView('assessment')}} onResume={a=>{setAssessment(a);setView('assessment')}}/></>
+  return <><Header user={user} view={view} onNavigate={setView} onLogout={logout}/>{view==='vocabulary'?<Vocabulary/>:<Dashboard key={view} user={user} onStart={a=>{setAssessment(a);setView('assessment')}} onResume={a=>{setAssessment(a);setView('assessment')}}/>}</>
 }
 

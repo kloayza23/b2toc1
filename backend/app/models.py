@@ -33,6 +33,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     assessments: Mapped[list["Assessment"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    vocabulary_words: Mapped[list["VocabularyWord"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Question(Base):
@@ -85,5 +86,21 @@ class Answer(Base):
     is_correct: Mapped[bool] = mapped_column(Boolean)
     answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     assessment: Mapped[Assessment] = relationship(back_populates="answers")
+    question: Mapped[Question] = relationship()
+
+
+class VocabularyWord(Base):
+    __tablename__ = "vocabulary_words"
+    __table_args__ = (UniqueConstraint("user_id", "question_id", "normalized_word"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"), index=True)
+    word: Mapped[str] = mapped_column(String(100))
+    normalized_word: Mapped[str] = mapped_column(String(100), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="learning", index=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    learned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    user: Mapped[User] = relationship(back_populates="vocabulary_words")
     question: Mapped[Question] = relationship()
 
